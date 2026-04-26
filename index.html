@@ -95,7 +95,6 @@ function createPeerConnection() {
 
 function appendLocal(text) {
   localSDP.value = (localSDP.value ? localSDP.value + "\n" : "") + text;
-  // auto-scroll for mobile
   localSDP.scrollTop = localSDP.scrollHeight;
 }
 
@@ -108,7 +107,7 @@ async function startCamera() {
     localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
     appendLocal("// Local media started");
   } catch (e) {
-    alert("Camera/mic error: " + e.message);
+    alert("Camera/mic error: " + (e && e.message ? e.message : e));
   }
 }
 
@@ -119,26 +118,34 @@ async function createOffer() {
     await pc.setLocalDescription(offer);
     appendLocal(JSON.stringify({ type: pc.localDescription.type, sdp: pc.localDescription.sdp }));
   } catch (e) {
-    alert("Offer error: " + e.message);
+    alert("Offer error: " + (e && e.message ? e.message : e));
   }
 }
 
 async function createAnswer() {
   createPeerConnection();
-  const text = remoteSDP.value.trim();
-  if (!text) { alert("Paste remote offer first"); return; }
   try {
+    // Ensure remote offer is present and not already applied
+    const remoteObj = await parseFirstSDP(remoteSDP.value);
+    if (!remoteObj || remoteObj.type !== 'offer') { alert("Paste a remote OFFER before creating an answer."); return; }
+
+    // Only set remote if peer is in 'stable' (expecting offer) or remoteDescription not set
+    if (!pc.remoteDescription || pc.signalingState === 'stable') {
+      await pc.setRemoteDescription(remoteObj);
+      appendLocal("// Remote offer set");
+    } else {
+      appendLocal("// Remote offer already set or signalingState=" + pc.signalingState);
+    }
+
     if (!localStream) await startCamera();
-    const remoteObj = await parseFirstSDP(text);
-    if (!remoteObj) { alert("No valid remote SDP found"); return; }
-    await pc.setRemoteDescription(remoteObj);
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
     appendLocal(JSON.stringify({ type: pc.localDescription.type, sdp: pc.localDescription.sdp }));
-    // apply any candidate lines present in the remote textarea
-    await applyCandidatesFromText(text);
+
+    // Also apply any candidate lines that came with the pasted offer
+    await applyCandidatesFromText(remoteSDP.value);
   } catch (e) {
-    alert("Answer error: " + e.message);
+    alert("Answer error: " + (e && e.message ? e.message : e));
   }
 }
 
@@ -147,16 +154,39 @@ async function setRemote() {
   if (!text) { alert("Paste remote SDP/candidates first"); return; }
   createPeerConnection();
   try {
-    // try to set any SDP (offer/answer) in text
-    const obj = await parseFirstSDP(text);
-    if (obj) await pc.setRemoteDescription(obj);
+    // Try to find an SDP object (offer or answer) in the pasted text
+    const sdpObj = await parseFirstSDP(text);
+
+    if (sdpObj) {
+      const state = pc.signalingState;
+      if (sdpObj.type === 'offer') {
+        // we can accept an offer only when stable (we are caller-free)
+        if (state === 'stable' && (!pc.remoteDescription || !pc.remoteDescription.sdp)) {
+          await pc.setRemoteDescription(sdpObj);
+          appendLocal("// Remote offer set via Set Remote");
+        } else {
+          appendLocal("// Ignored remote offer — signalingState=" + state);
+        }
+      } else if (sdpObj.type === 'answer') {
+        // we can accept an answer only when we previously set a local offer
+        if (state === 'have-local-offer' || (pc.localDescription && pc.localDescription.type === 'offer' && !pc.remoteDescription)) {
+          await pc.setRemoteDescription(sdpObj);
+          appendLocal("// Remote answer set via Set Remote");
+        } else {
+          appendLocal("// Ignored remote answer — signalingState=" + state);
+        }
+      }
+    }
+
+    // Apply any candidate lines found in the pasted text
     await applyCandidatesFromText(text);
   } catch (e) {
-    alert("Set remote error: " + e.message);
+    alert("Set remote error: " + (e && e.message ? e.message : e));
   }
 }
 
 async function parseFirstSDP(text) {
+  if (!text) return null;
   const lines = text.split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
   for (const line of lines) {
     try {
@@ -168,12 +198,16 @@ async function parseFirstSDP(text) {
 }
 
 async function applyCandidatesFromText(text) {
+  if (!text) return;
   const lines = text.split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
   for (const line of lines) {
     try {
       const parsed = JSON.parse(line);
       if (parsed && parsed.candidate) {
-        await pc.addIceCandidate(parsed.candidate).catch(e=>console.warn(e));
+        // addIceCandidate is tolerant of duplicates in many browsers; catch errors
+        await pc.addIceCandidate(parsed.candidate).catch(e => {
+          console.warn("addIceCandidate failed:", e);
+        });
       }
     } catch(e){}
   }
@@ -181,8 +215,11 @@ async function applyCandidatesFromText(text) {
 
 function hangUp() {
   if (pc) {
-    pc.getSenders().forEach(s=>{ try{ if(s.track) s.track.stop(); }catch(e){} });
-    pc.close(); pc=null;
+    try {
+      pc.getSenders().forEach(s=>{ try{ if(s.track) s.track.stop(); }catch(e){} });
+      pc.close();
+    } catch(e){}
+    pc=null;
   }
   if (localStream) { localStream.getTracks().forEach(t=>t.stop()); localStream=null; }
   localVideo.srcObject = null;
@@ -191,7 +228,7 @@ function hangUp() {
   remoteSDP.value = "";
 }
 
-// Copy/paste helpers for mobile
+// Clipboard helpers
 async function copyLocalToClipboard(){
   try {
     await navigator.clipboard.writeText(localSDP.value);
@@ -218,9 +255,11 @@ document.getElementById('addRemoteDescBtn').onclick = setRemote;
 document.getElementById('closeBtn').onclick = hangUp;
 document.getElementById('copyLocal').onclick = copyLocalToClipboard;
 document.getElementById('clearLocal').onclick = ()=> localSDP.value = "";
-document.getElementById('pasteRemote').onclick = async ()=> { await pasteFromClipboardToRemote(); setRemote(); };
+document.getElementById('pasteRemote').onclick = async ()=> { await pasteFromClipboardToRemote(); /* do not auto-set remote; user can tap Set Remote or Create Answer */ };
 document.getElementById('clearRemote').onclick = ()=> remoteSDP.value = "";
 
 // cleanup
 window.addEventListener('beforeunload', hangUp);
 </script>
+</body>
+</html>
