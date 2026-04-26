@@ -4,13 +4,147 @@
   <meta charset="utf-8"/>
   <title>Mini WebRTC P2P Video (STUN, manual signaling)</title>
   <style>
-    body { font-family: Arial, sans-serif; max-width:800px; margin:20px; }
-    video { width:48%; border:1px solid #ccc; background:#000; }
-    textarea { width:100%; height:120px; }
-    .row { display:flex; gap:8px; margin-bottom:8px; }
-    .col { flex:1; }
-    button { margin-right:8px; }
-    small { color:#555; }
+    <style>
+  /* Mobile-first responsive styles */
+  :root {
+    --gap: 8px;
+    --max-width: 900px;
+    --video-aspect: 16/9;
+    --video-border: 1px solid #ccc;
+    --bg: #fff;
+    --muted: #555;
+    --radius: 8px;
+  }
+
+  /* Page layout */
+  body {
+    font-family: Arial, sans-serif;
+    max-width: var(--max-width);
+    margin: 12px;
+    padding: 12px;
+    background: var(--bg);
+    color: #111;
+    -webkit-font-smoothing:antialiased;
+    -moz-osx-font-smoothing:grayscale;
+  }
+
+  h2 {
+    font-size: 1.15rem;
+    margin: 8px 0 12px;
+  }
+
+  /* Row and column utility classes (keep consistent with existing HTML) */
+  .row {
+    display: flex;
+    gap: var(--gap);
+    margin-bottom: 8px;
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .col {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  /* Video styling: make them responsive, preserve aspect ratio */
+  video {
+    width: 100%;
+    max-width: 100%;
+    height: auto;
+    aspect-ratio: var(--video-aspect);
+    border: var(--video-border);
+    background: #000;
+    border-radius: 6px;
+    object-fit: cover;
+    display: block;
+  }
+
+  /* When two videos are side-by-side on wider screens */
+  @media (min-width: 640px) {
+    .row > video {
+      width: 48%;
+    }
+  }
+
+  /* Controls container */
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 8px 0 12px;
+    align-items: center;
+  }
+
+  /* Buttons: bigger touch targets on mobile */
+  button {
+    font-size: 0.95rem;
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid #d0d0d0;
+    background: linear-gradient(#fff, #f6f6f6);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  button:active { transform: translateY(1px); }
+  button:focus { outline: 3px solid rgba(21,156,228,0.18); outline-offset: 2px; }
+
+  /* Stack long control lists on narrow screens */
+  .controls > * {
+    flex: 1 1 120px;
+  }
+
+  small { color: var(--muted); display: block; margin-top: 6px; }
+
+  /* Textareas: full width and comfortable height for touch typing */
+  textarea {
+    width: 100%;
+    min-height: 120px;
+    max-height: 320px;
+    padding: 10px;
+    box-sizing: border-box;
+    resize: vertical;
+    border-radius: 8px;
+    border: 1px solid #ddd;
+    font-family: monospace;
+    font-size: 0.9rem;
+    line-height: 1.4;
+    background: #fafafa;
+  }
+
+  /* Headings spacing */
+  h3 {
+    margin-top: 16px;
+    margin-bottom: 8px;
+    font-size: 1rem;
+  }
+
+  /* Reduce visual clutter on small screens */
+  @media (max-width: 420px) {
+    body { margin: 10px; padding: 10px; }
+    h2 { font-size: 1rem; }
+    button { padding: 10px; font-size: 0.9rem; }
+    .controls > * { flex-basis: 100%; }
+    .row { gap: 6px; }
+    textarea { font-size: 0.85rem; min-height: 100px; }
+  }
+
+  /* Layout helper: keep a small gap between button group and small note */
+  .row + div, .controls { margin-bottom: 10px; }
+
+  /* Make remote video visually distinct on larger screens */
+  @media (min-width: 900px) {
+    video { border-radius: 6px; }
+    remoteVideo, #remoteVideo { box-shadow: 0 6px 18px rgba(0,0,0,0.06); }
+  }
+
+  /* Accessibility: prefer higher contrast controls when prefers-contrast set */
+  @media (prefers-contrast: more) {
+    button { border-color: #888; background: #fff; }
+    textarea { border-color: #888; }
+  }
+</style>
   </style>
 </head>
 <body>
