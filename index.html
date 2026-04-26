@@ -1,199 +1,226 @@
 <!doctype html>
 <html>
 <head>
-  <meta charset="utf-8"/>
-  <title>Mini WebRTC P2P Video (STUN, manual signaling)</title>
-  <style>
-    body { font-family: Arial, sans-serif; max-width:800px; margin:20px; }
-    video { width:48%; border:1px solid #ccc; background:#000; }
-    textarea { width:100%; height:120px; }
-    .row { display:flex; gap:8px; margin-bottom:8px; }
-    .col { flex:1; }
-    button { margin-right:8px; }
-    small { color:#555; }
-  </style>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Mobile WebRTC P2P Video (Manual Signaling)</title>
+<style>
+  :root { font-family: system-ui, -apple-system, Roboto, "Helvetica Neue", Arial; color:#111; }
+  body { margin:0; padding:12px; box-sizing:border-box; background:#f7f8fa; }
+  header { text-align:center; margin-bottom:8px; }
+  h1 { font-size:18px; margin:6px 0; }
+  .videos { display:flex; gap:8px; flex-direction:column; }
+  video { width:100%; height:auto; background:#000; border-radius:8px; max-height:40vh; object-fit:cover; }
+  .controls { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; justify-content:center; }
+  button { flex:1 1 45%; min-height:44px; font-size:15px; border-radius:8px; border:0; background:#2563eb; color:#fff; padding:10px; }
+  button.secondary { background:#e5e7eb; color:#111; }
+  .note { font-size:12px; color:#555; text-align:center; margin-top:6px; }
+  textarea { width:100%; min-height:120px; resize:vertical; padding:8px; border-radius:8px; border:1px solid #ddd; font-size:13px; margin-top:8px; }
+  .row { display:flex; gap:8px; margin-top:8px; }
+  .small-btn { flex:1; min-height:40px; font-size:13px; border-radius:8px; }
+  footer { margin-top:10px; font-size:12px; color:#666; text-align:center; }
+  @media(min-width:720px){
+    .videos{ flex-direction:row; }
+    video{ width:48%; max-height:60vh; }
+    button{ flex:1 1 18%; min-width:120px; }
+  }
+</style>
 </head>
 <body>
-  <h2>Mini WebRTC P2P Video — Manual Signaling</h2>
+<header>
+  <h1>Mobile WebRTC — Manual Signaling</h1>
+  <div class="note">Uses public STUN: <strong>stun:stun.l.google.com:19302</strong>. Copy/paste SDPs between peers.</div>
+</header>
+
+<section class="videos">
+  <video id="localVideo" autoplay playsinline muted></video>
+  <video id="remoteVideo" autoplay playsinline></video>
+</section>
+
+<div class="controls" role="toolbar" aria-label="controls">
+  <button id="startBtn">Start Camera</button>
+  <button id="createOfferBtn" class="secondary">Create Offer</button>
+  <button id="createAnswerBtn" class="secondary">Create Answer</button>
+  <button id="addRemoteDescBtn" class="secondary">Set Remote</button>
+  <button id="closeBtn" class="secondary">Hang Up</button>
+</div>
+
+<div>
+  <label for="localSDP" class="note">Local SDP / candidates (tap Copy to send)</label>
+  <textarea id="localSDP" readonly placeholder="Local SDP and candidates appear here"></textarea>
   <div class="row">
-    <video id="localVideo" autoplay playsinline muted></video>
-    <video id="remoteVideo" autoplay playsinline></video>
+    <button id="copyLocal" class="small-btn">Copy Local</button>
+    <button id="clearLocal" class="small-btn secondary">Clear</button>
   </div>
 
-  <div>
-    <button id="startBtn">Start Local Video</button>
-    <button id="createOfferBtn">Create Offer</button>
-    <button id="createAnswerBtn">Create Answer</button>
-    <button id="addRemoteDescBtn">Set Remote Description</button>
-    <button id="gatherCandidatesBtn">Gather Candidates</button>
-    <button id="closeBtn">Hang Up</button>
-    <div><small>Uses public STUN: stun:stun.l.google.com:19302</small></div>
+  <label for="remoteSDP" class="note">Remote SDP / candidates (paste here)</label>
+  <textarea id="remoteSDP" placeholder="Paste remote SDP / candidates here"></textarea>
+  <div class="row">
+    <button id="pasteRemote" class="small-btn">Apply Paste</button>
+    <button id="clearRemote" class="small-btn secondary">Clear</button>
   </div>
+</div>
 
-  <h3>Local SDP / Candidate (copy to remote peer)</h3>
-  <textarea id="localSDP" placeholder="Local SDP / ICE candidates appear here"></textarea>
+<footer>Tip: Paste entire textarea contents; the app will parse and apply SDP and candidate JSON lines automatically.</footer>
 
-  <h3>Remote SDP / Candidate (paste from remote peer)</h3>
-  <textarea id="remoteSDP" placeholder="Paste remote SDP / ICE candidates here"></textarea>
+<script>
+const iceServers = [{ urls: "stun:stun.l.google.com:19302" }];
 
-  <script>
-    // Config: public STUN server
-    const iceServers = [{ urls: "stun:stun.l.google.com:19302" }];
+let pc = null;
+let localStream = null;
+const localVideo = document.getElementById('localVideo');
+const remoteVideo = document.getElementById('remoteVideo');
+const localSDP = document.getElementById('localSDP');
+const remoteSDP = document.getElementById('remoteSDP');
 
-    let pc = null;
-    let localStream = null;
-    const localVideo = document.getElementById('localVideo');
-    const remoteVideo = document.getElementById('remoteVideo');
-    const localSDP = document.getElementById('localSDP');
-    const remoteSDP = document.getElementById('remoteSDP');
+function createPeerConnection() {
+  if (pc) return pc;
+  pc = new RTCPeerConnection({ iceServers });
 
-    // Simple function to create RTCPeerConnection
-    function createPeerConnection() {
-      pc = new RTCPeerConnection({ iceServers });
+  pc.onicecandidate = (evt) => {
+    if (!evt.candidate) return;
+    appendLocal(JSON.stringify({ candidate: evt.candidate }));
+  };
 
-      // Show any gathered local ICE candidates appended to localSDP
-      pc.onicecandidate = (evt) => {
-        if (!evt.candidate) return;
-        // Append candidate in a simple newline-separated form
-        localSDP.value += "\n" + JSON.stringify({ candidate: evt.candidate });
-      };
+  pc.ontrack = (evt) => {
+    if (remoteVideo.srcObject !== evt.streams[0]) remoteVideo.srcObject = evt.streams[0];
+  };
 
-      // When remote track arrives, show it
-      pc.ontrack = (evt) => {
-        // For video we expect 1 stream/track
-        if (remoteVideo.srcObject !== evt.streams[0]) {
-          remoteVideo.srcObject = evt.streams[0];
-        }
-      };
+  pc.oniceconnectionstatechange = () => {
+    appendLocal("// ICE state: " + pc.iceConnectionState);
+  };
 
-      // Optional: log connection state changes
-      pc.oniceconnectionstatechange = () => {
-        console.log("ICE state:", pc.iceConnectionState);
-      };
+  return pc;
+}
 
-      return pc;
-    }
+function appendLocal(text) {
+  localSDP.value = (localSDP.value ? localSDP.value + "\n" : "") + text;
+  // auto-scroll for mobile
+  localSDP.scrollTop = localSDP.scrollHeight;
+}
 
-    // Start local camera
-    document.getElementById('startBtn').onclick = async () => {
-      if (localStream) return;
-      try {
-        localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-        localVideo.srcObject = localStream;
+async function startCamera() {
+  if (localStream) return;
+  try {
+    localStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: true });
+    localVideo.srcObject = localStream;
+    createPeerConnection();
+    localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+    appendLocal("// Local media started");
+  } catch (e) {
+    alert("Camera/mic error: " + e.message);
+  }
+}
 
-        if (!pc) createPeerConnection();
-        // Add tracks
-        localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
-        localSDP.value = "Local media started.\n";
-      } catch (e) {
-        alert("getUserMedia error: " + e);
+async function createOffer() {
+  createPeerConnection();
+  try {
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    appendLocal(JSON.stringify({ type: pc.localDescription.type, sdp: pc.localDescription.sdp }));
+  } catch (e) {
+    alert("Offer error: " + e.message);
+  }
+}
+
+async function createAnswer() {
+  createPeerConnection();
+  const text = remoteSDP.value.trim();
+  if (!text) { alert("Paste remote offer first"); return; }
+  try {
+    if (!localStream) await startCamera();
+    const remoteObj = await parseFirstSDP(text);
+    if (!remoteObj) { alert("No valid remote SDP found"); return; }
+    await pc.setRemoteDescription(remoteObj);
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    appendLocal(JSON.stringify({ type: pc.localDescription.type, sdp: pc.localDescription.sdp }));
+    // apply any candidate lines present in the remote textarea
+    await applyCandidatesFromText(text);
+  } catch (e) {
+    alert("Answer error: " + e.message);
+  }
+}
+
+async function setRemote() {
+  const text = remoteSDP.value.trim();
+  if (!text) { alert("Paste remote SDP/candidates first"); return; }
+  createPeerConnection();
+  try {
+    // try to set any SDP (offer/answer) in text
+    const obj = await parseFirstSDP(text);
+    if (obj) await pc.setRemoteDescription(obj);
+    await applyCandidatesFromText(text);
+  } catch (e) {
+    alert("Set remote error: " + e.message);
+  }
+}
+
+async function parseFirstSDP(text) {
+  const lines = text.split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
+  for (const line of lines) {
+    try {
+      const parsed = JSON.parse(line);
+      if (parsed && parsed.sdp && parsed.type) return parsed;
+    } catch(e){}
+  }
+  return null;
+}
+
+async function applyCandidatesFromText(text) {
+  const lines = text.split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
+  for (const line of lines) {
+    try {
+      const parsed = JSON.parse(line);
+      if (parsed && parsed.candidate) {
+        await pc.addIceCandidate(parsed.candidate).catch(e=>console.warn(e));
       }
-    };
+    } catch(e){}
+  }
+}
 
-    // Create Offer (caller)
-    document.getElementById('createOfferBtn').onclick = async () => {
-      if (!pc) createPeerConnection();
-      try {
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-        // Output offer SDP
-        localSDP.value = JSON.stringify({ type: pc.localDescription.type, sdp: pc.localDescription.sdp });
-      } catch (e) {
-        alert("Offer error: " + e);
-      }
-    };
+function hangUp() {
+  if (pc) {
+    pc.getSenders().forEach(s=>{ try{ if(s.track) s.track.stop(); }catch(e){} });
+    pc.close(); pc=null;
+  }
+  if (localStream) { localStream.getTracks().forEach(t=>t.stop()); localStream=null; }
+  localVideo.srcObject = null;
+  remoteVideo.srcObject = null;
+  localSDP.value = "";
+  remoteSDP.value = "";
+}
 
-    // Create Answer (callee) — expects remoteOffer pasted in remoteSDP first
-    document.getElementById('createAnswerBtn').onclick = async () => {
-      if (!pc) createPeerConnection();
-      const remoteText = remoteSDP.value.trim();
-      if (!remoteText) { alert('Paste remote offer into "Remote SDP" first'); return; }
+// Copy/paste helpers for mobile
+async function copyLocalToClipboard(){
+  try {
+    await navigator.clipboard.writeText(localSDP.value);
+    alert("Local SDP copied to clipboard");
+  } catch (e) {
+    prompt("Copy this text manually:", localSDP.value);
+  }
+}
+async function pasteFromClipboardToRemote(){
+  try {
+    const txt = await navigator.clipboard.readText();
+    remoteSDP.value = txt;
+    alert("Pasted clipboard to Remote textarea");
+  } catch (e) {
+    alert("Clipboard read failed: paste manually");
+  }
+}
 
-      try {
-        // If the local media hasn't been started, try to get permission now
-        if (!localStream) {
-          localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-          localVideo.srcObject = localStream;
-          localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
-        }
+// UI wiring
+document.getElementById('startBtn').onclick = startCamera;
+document.getElementById('createOfferBtn').onclick = createOffer;
+document.getElementById('createAnswerBtn').onclick = createAnswer;
+document.getElementById('addRemoteDescBtn').onclick = setRemote;
+document.getElementById('closeBtn').onclick = hangUp;
+document.getElementById('copyLocal').onclick = copyLocalToClipboard;
+document.getElementById('clearLocal').onclick = ()=> localSDP.value = "";
+document.getElementById('pasteRemote').onclick = async ()=> { await pasteFromClipboardToRemote(); setRemote(); };
+document.getElementById('clearRemote').onclick = ()=> remoteSDP.value = "";
 
-        const remoteObj = JSON.parse(remoteText);
-        await pc.setRemoteDescription(remoteObj);
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        localSDP.value = JSON.stringify({ type: pc.localDescription.type, sdp: pc.localDescription.sdp });
-      } catch (e) {
-        alert("Answer error: " + e);
-      }
-    };
-
-    // Set remote description (used by both sides after copying remote SDP)
-    document.getElementById('addRemoteDescBtn').onclick = async () => {
-      const text = remoteSDP.value.trim();
-      if (!text) { alert('Paste remote text into "Remote SDP"'); return; }
-      if (!pc) createPeerConnection();
-      try {
-        // The remote side may have pasted either an SDP object or multiple candidate lines.
-        // Try parse as JSON. If it's a candidate line list, apply them.
-        const obj = JSON.parse(text);
-        if (obj.sdp && obj.type) {
-          await pc.setRemoteDescription(obj);
-          localSDP.value += "\nRemote description set.";
-        } else if (obj.candidate) {
-          await pc.addIceCandidate(obj.candidate).catch(e => console.warn(e));
-          localSDP.value += "\nRemote candidate added.";
-        } else {
-          alert("Unrecognized JSON object. Paste offer/answer SDP JSON or individual candidate JSON lines.");
-        }
-      } catch (e) {
-        // If not JSON, maybe multiple lines of candidate JSON; try to split
-        const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-        for (const line of lines) {
-          try {
-            const parsed = JSON.parse(line);
-            if (parsed.type && parsed.sdp) {
-              await pc.setRemoteDescription(parsed);
-              localSDP.value += "\nRemote description set.";
-            } else if (parsed.candidate) {
-              await pc.addIceCandidate(parsed.candidate).catch(err => console.warn(err));
-              localSDP.value += "\nRemote candidate added.";
-            }
-          } catch (err) {
-            console.warn("Ignored line:", line);
-          }
-        }
-      }
-    };
-
-    // Optionally gather candidates (triggered automatically by setLocalDescription in browsers)
-    document.getElementById('gatherCandidatesBtn').onclick = async () => {
-      // In most browsers candidates appear automatically via onicecandidate; this button is mostly informational.
-      if (!pc) createPeerConnection();
-      localSDP.value += "\nGathering candidates (check console for ICE state).";
-    };
-
-    // Hang up / close
-    document.getElementById('closeBtn').onclick = () => {
-      if (pc) {
-        pc.getSenders().forEach(s => { try { if (s.track) s.track.stop(); } catch(e){} });
-        pc.close();
-        pc = null;
-      }
-      if (localStream) {
-        localStream.getTracks().forEach(t => t.stop());
-        localStream = null;
-      }
-      localVideo.srcObject = null;
-      remoteVideo.srcObject = null;
-      localSDP.value = "";
-      remoteSDP.value = "";
-    };
-
-    // When page unload, clean up
-    window.addEventListener('beforeunload', () => {
-      if (pc) pc.close();
-      if (localStream) localStream.getTracks().forEach(t=>t.stop());
-    });
-  </script>
-</body>
-</html>
+// cleanup
+window.addEventListener('beforeunload', hangUp);
+</script>
